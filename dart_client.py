@@ -1,11 +1,18 @@
-import os
+# 로컬 개발 시 .streamlit/secrets.toml에 아래 내용 추가
+# [secrets]
+# DART_API_KEY = "your_dart_api_key_here"
+#
+# 배포 시 Streamlit Community Cloud 대시보드 > Secrets에 동일 내용 입력
+# .streamlit/secrets.toml은 .gitignore에 반드시 추가
+
 from datetime import datetime
 
 import requests
+import streamlit as st
 
 USE_SAMPLE_DATA = True
 
-DART_API_KEY = os.environ.get("DART_API_KEY")
+DART_API_KEY = st.secrets.get("DART_API_KEY")
 
 # DART API 엔드포인트
 # URL: https://opendart.fss.or.kr/api/list.json
