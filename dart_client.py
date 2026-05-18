@@ -168,7 +168,7 @@ def _sample_for_date(date: str) -> list[dict]:
     return [_attach_defaults(item, date) for item in _SAMPLE_DISCLOSURES]
 
 
-def get_disclosures(date: str = None) -> list[dict]:
+def get_disclosures(date: str | None) -> list[dict]:
     if date is None:
         date = datetime.today().strftime("%Y%m%d")
 
