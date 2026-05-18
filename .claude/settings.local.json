@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Path \"c:\\\\Users\\\\aica_\\\\Desktop\\\\github\\\\AI-Stock\\\\backend\")",
+      "PowerShell(Move-Item \"c:\\\\Users\\\\aica_\\\\Desktop\\\\github\\\\AI-Stock\\\\dart_client.py\" \"c:\\\\Users\\\\aica_\\\\Desktop\\\\github\\\\AI-Stock\\\\backend\\\\dart_client.py\")",
+      "PowerShell(Move-Item \"c:\\\\Users\\\\aica_\\\\Desktop\\\\github\\\\AI-Stock\\\\llm_classifier.py\" \"c:\\\\Users\\\\aica_\\\\Desktop\\\\github\\\\AI-Stock\\\\backend\\\\llm_classifier.py\")"
+    ]
+  }
+}
