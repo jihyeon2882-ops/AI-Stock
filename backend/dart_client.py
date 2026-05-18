@@ -10,7 +10,7 @@ from datetime import datetime
 import requests
 import streamlit as st
 
-USE_SAMPLE_DATA = True
+USE_SAMPLE_DATA = False
 
 DART_API_KEY = st.secrets.get("DART_API_KEY")
 
