@@ -139,7 +139,6 @@ def _fetch_from_dart(date: str) -> list[dict]:
         "crtfc_key": DART_API_KEY,
         "bgn_de": date,
         "end_de": date,
-        "pblntf_ty": "A",
         "page_count": 100,
     }
     response = requests.get(url, params=params, timeout=10)
