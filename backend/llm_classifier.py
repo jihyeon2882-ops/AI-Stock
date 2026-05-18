@@ -12,18 +12,21 @@ from openai import OpenAI
 
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
 
-_SYSTEM_PROMPT = """
+_DEFAULT_IMPORTANCE_RULES: dict[str, list[str]] = {
+    "high": ["유상증자", "전환사채", "최대주주변경", "관리종목지정", "상장폐지", "자기자본 10% 이상 대형계약"],
+    "mid": ["자기주식취득·처분", "임원변경", "분기·반기 실적공시", "소형계약"],
+    "low": ["정기공시(사업보고서 등)", "단순공고", "주주총회소집", "기타 법정의무공시"],
+}
+
+_SYSTEM_PROMPT_TEMPLATE = """
 너는 한국 주식 공시 분석 전문가야.
 아래 공시 목록을 분석해서 JSON 형식으로만 응답해.
 다른 텍스트는 절대 포함하지 마.
 
 응답 형식:
-{"results": [{"rcept_no": "...", "importance": "...", "summary": "...", "sentiment": "..."}, ...]}
+{{"results": [{{"rcept_no": "...", "importance": "...", "summary": "...", "sentiment": "..."}}, ...]}}
 
-중요도(importance) 기준:
-- high: 유상증자, 전환사채, 최대주주변경, 관리종목지정, 상장폐지, 자기자본 10% 이상 대형계약
-- mid: 자기주식취득·처분, 임원변경, 분기·반기 실적공시, 소형계약
-- low: 정기공시(사업보고서 등), 단순공고, 주주총회소집, 기타 법정의무공시
+{importance_section}
 
 요약(summary) 기준:
 - 30자 이내 한국어 1줄 요약
@@ -39,12 +42,27 @@ _SYSTEM_PROMPT = """
 _DEFAULT = {"importance": "low", "summary": "요약 실패", "sentiment": "neu"}
 
 
+def _build_system_prompt(rules: dict[str, list[str]]) -> str:
+    lines = ["중요도(importance) 기준:"]
+    for level in ("high", "mid", "low"):
+        keywords = rules.get(level, [])
+        lines.append(f"- {level}: {', '.join(keywords)}")
+    importance_section = "\n".join(lines)
+    return _SYSTEM_PROMPT_TEMPLATE.format(importance_section=importance_section)
+
+
 def _apply_defaults(results: list[dict]) -> None:
     for item in results:
         item.update(_DEFAULT)
 
 
-def classify_disclosures(disclosures: list[dict]) -> list[dict]:
+def classify_disclosures(
+    disclosures: list[dict],
+    importance_rules: dict[str, list[str]] | None = None,
+) -> list[dict]:
+    rules = importance_rules if importance_rules else _DEFAULT_IMPORTANCE_RULES
+    system_prompt = _build_system_prompt(rules)
+
     results = copy.deepcopy(disclosures)
 
     user_payload = [
@@ -64,7 +82,7 @@ def classify_disclosures(disclosures: list[dict]) -> list[dict]:
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
         )
