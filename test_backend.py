@@ -1,20 +1,18 @@
+"""수동 DART/Gemini 확인. 자동 테스트는 tests/에서 외부 호출 없이 실행한다."""
+
 from backend import get_classified_disclosures
+from backend.dart_client import DisclosureFetchError
 
-# 기본값 테스트
-result = get_classified_disclosures()
-print(f"기본값 분류 완료: {len(result)}건")
-for d in result:
-    print(f"[{d['importance']}] {d['corp_name']} — {d['summary']} ({d['sentiment']})")
 
-print("---")
+def main():
+    try:
+        result = get_classified_disclosures()
+    except DisclosureFetchError as error:
+        raise SystemExit(str(error)) from None
+    print(f"조회 완료: {len(result)}건")
+    for item in result:
+        print(f"[{item['importance'] or '미분류'}] {item['corp_name']} — {item['summary']}")
 
-# importance_rules 직접 전달 테스트
-custom_rules = {
-    "high": ["유상증자", "전환사채"],
-    "mid": ["자기주식취득"],
-    "low": ["사업보고서", "주주총회소집공고"]
-}
-result2 = get_classified_disclosures(importance_rules=custom_rules)
-print(f"커스텀 분류 완료: {len(result2)}건")
-for d in result2:
-    print(f"[{d['importance']}] {d['corp_name']} — {d['summary']} ({d['sentiment']})")
+
+if __name__ == "__main__":
+    main()

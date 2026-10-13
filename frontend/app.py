@@ -1,4 +1,6 @@
-from datetime import date, datetime
+from datetime import datetime
+from html import escape
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import sys
 
@@ -11,9 +13,14 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from backend import get_classified_disclosures
+from backend.dart_client import DisclosureFetchError
+
+
+def today_kst():
+    return datetime.now(ZoneInfo("Asia/Seoul")).date()
 
 # 10분 캐싱 함수
-@st.cache_data(ttl=600)  
+@st.cache_data(ttl=600)
 def get_cached_disclosures(date_str):
     return get_classified_disclosures(date=date_str)
 
@@ -21,7 +28,7 @@ def get_cached_disclosures(date_str):
 # 0. 입력 위젯 연동을 위한 세션 상태(Session State) 초기화
 # ==========================================
 if "search_date_input" not in st.session_state:
-    st.session_state.search_date_input = date.today()
+    st.session_state.search_date_input = today_kst()
 if "importance_filter_input" not in st.session_state:
     st.session_state.importance_filter_input = "전체"
 if "sentiment_filter_input" not in st.session_state:
@@ -45,6 +52,14 @@ def auto_save_and_filter_new(high_disclosures):
         st.session_state.saved_alerts.extend(new_alerts)
     return new_alerts
 
+
+def select_alert_date(dt_obj):
+    # 위젯 재생성 전에 갱신한다. 모달 클릭 시 기존 필터를 초기화한다.
+    st.session_state.search_date_input = dt_obj
+    st.session_state.importance_filter_input = "전체"
+    st.session_state.sentiment_filter_input = "전체"
+    st.session_state.trigger_search = True
+
 # ==========================================
 # 2. 팝업창(모달) UI 정의
 # ==========================================
@@ -64,21 +79,19 @@ def show_inbox_popup():
         # [요구사항 3, 4] 리스트 내 버튼 및 X 버튼 레이아웃 구현
         for idx, d in enumerate(st.session_state.saved_alerts):
             col_item, col_del = st.columns([5, 1])
-            
+
             with col_item:
                 # 공시 정보 버튼화 (클릭 시 해당 날짜로 메인 화면 이동 및 자동 조회)
                 try:
                     dt_obj = datetime.strptime(d.get('rcept_dt'), "%Y%m%d").date()
-                except:
-                    dt_obj = date.today()
-                
+                except (TypeError, ValueError):
+                    dt_obj = today_kst()
+
                 btn_label = f"🏢 {d.get('corp_name')} | {d.get('report_nm')}\n({d.get('rcept_dt')})"
-                if st.button(btn_label, key=f"go_{d.get('rcept_no')}_{idx}", use_container_width=True):
-                    st.session_state.search_date_input = dt_obj
-                    st.session_state.importance_filter_input = "전체"  # 리스트에 확실히 보이도록 초기화
-                    st.session_state.trigger_search = True            # 자동 조회 트리거 활성화
+                if st.button(btn_label, key=f"go_{d.get('rcept_no')}_{idx}",
+                             on_click=select_alert_date, args=(dt_obj,), use_container_width=True):
                     st.rerun()
-            
+
             with col_del:
                 # 개별 삭제 버튼
                 if st.button("❌", key=f"del_{d.get('rcept_no')}_{idx}", use_container_width=True):
@@ -95,26 +108,27 @@ with col_title:
     st.title("돈버는 공시 알리미")
 
 with col_inbox:
-    st.write(" ") 
+    st.write(" ")
     inbox_label = f"🔔 보관함 ({len(st.session_state.saved_alerts)})"
     if st.button(inbox_label, use_container_width=True):
         show_inbox_popup()
 
-st.write("공시를 AI가 중요도와 영향도로 분류해드립니다.")
+st.write("공시 제목을 AI가 중요도와 영향 가능성으로 분류합니다.")
+st.caption("본문 분석이나 실시간 주가 예측이 아닙니다. 금액·조건은 DART 원문에서 확인하세요. 보관함은 현재 접속 세션에서만 유지됩니다.")
 
 # --- 필터 설정 영역 (세션 상태와 key 파라미터로 동적 연동) ---
-selected_date = st.date_input("조회할 날짜를 선택하세요.", key="search_date_input")
-selected_importance = st.selectbox("중요도 필터", ["전체", "높음", "보통", "일반"], key="importance_filter_input")
-selected_sentiment = st.selectbox("영향도 필터", ["전체", "긍정", "부정", "중립"], key="sentiment_filter_input")
+selected_date = st.date_input("조회할 날짜를 선택하세요.", key="search_date_input", max_value=today_kst())
+selected_importance = st.selectbox("중요도 필터", ["전체", "높음", "보통", "일반", "미분류"], key="importance_filter_input")
+selected_sentiment = st.selectbox("영향도 필터", ["전체", "긍정", "부정", "중립", "미분류"], key="sentiment_filter_input")
 selected_sort = st.selectbox("정렬 기준", ["기본순", "중요도 높은 순", "영향도 긍정 먼저", "영향도 부정 먼저"], key="sort_input")
 
 date_str = selected_date.strftime("%Y%m%d")
 
 # 매핑 딕셔너리
-importance_map = {"high": "높음", "mid": "보통", "low": "일반"}
-sentiment_map = {"pos": "긍정", "neg": "부정", "neu": "중립"}
-importance_filter_map = {"높음": "high", "보통": "mid", "일반": "low"}
-sentiment_filter_map = {"긍정": ["pos"], "부정": ["neg"], "중립": ["neu"]}
+importance_map = {"high": "높음", "mid": "보통", "low": "일반", None: "미분류"}
+sentiment_map = {"pos": "긍정", "neg": "부정", "neu": "중립", None: "미분류"}
+importance_filter_map = {"높음": "high", "보통": "mid", "일반": "low", "미분류": None}
+sentiment_filter_map = {"긍정": ["pos"], "부정": ["neg"], "중립": ["neu"], "미분류": [None]}
 importance_order = {"high": 0, "mid": 1, "low": 2}
 sentiment_positive_order = {"pos": 0, "neu": 1, "neg": 2}
 sentiment_negative_order = {"neg": 0, "neu": 1, "pos": 2}
@@ -129,8 +143,8 @@ with col_refresh:
     refresh_clicked = st.button("🔄 최신화", use_container_width=True)
 
 if refresh_clicked:
-    st.cache_data.clear()  
-    st.toast("캐시가 완전히 초기화되었습니다! 이제 [공시 조회하기]를 누르면 실시간 데이터를 가져옵니다.")
+    get_cached_disclosures.clear(date_str)
+    submit_clicked = True
 
 # 보관함에서 공시를 선택해 이동한 경우, 조회를 자동으로 자동 수행합니다.
 if st.session_state.trigger_search:
@@ -141,108 +155,127 @@ if st.session_state.trigger_search:
 # 4. 공시 조회 및 분석 로직
 # ==========================================
 if submit_clicked:
+    st.session_state.pop("disclosure_results", None)
+    st.session_state.pop("results_date", None)
     with st.spinner("공시를 조회하고 AI가 분석하는 중입니다..."):
         try:
             disclosures = get_cached_disclosures(date_str)
-            # [요구사항 1] 공시 조회 시 보관함으로 들어가는 자동 저장 로직 완전 삭제
-            
-        except Exception as error:
-            st.error(f"공시 조회 중 오류가 발생했습니다: {error}")
-            disclosures = []
+            st.session_state.disclosure_results = disclosures
+            st.session_state.results_date = date_str
+            if any(item.get("analysis_status") != "complete" for item in disclosures):
+                # 실패 응답을 10분 동안 재사용하지 않고 다음 조회에서 분석을 재시도한다.
+                get_cached_disclosures.clear(date_str)
+        except DisclosureFetchError as error:
+            st.error(str(error))
+        except Exception:
+            st.error("공시 조회를 완료하지 못했습니다. 설정을 확인하고 다시 조회해 주세요.")
 
-        # --- [요구사항 2] 선택한 날짜에 해당하는 공시만 노출되도록 필터링 보장 ---
-        filtered_disclosures = [item for item in disclosures if item.get("rcept_dt") == date_str]
+if st.session_state.get("results_date") == date_str:
+    disclosures = st.session_state.disclosure_results
+    if any(item.get("data_source") == "sample" for item in disclosures):
+        st.warning("시연용 샘플 데이터입니다. 실제 공시가 아닙니다.")
+    missing_key = sum(item.get("analysis_status") == "not_configured" for item in disclosures)
+    failed_count = sum(item.get("analysis_status") == "failed" for item in disclosures)
+    if missing_key:
+        st.warning("Gemini 키가 설정되지 않아 실제 공시 목록만 표시합니다. AI 분류는 미분류입니다.")
+    if failed_count:
+        st.warning(f"AI 분석을 완료하지 못한 공시가 {failed_count}건 있습니다. 최신화로 다시 시도할 수 있습니다.")
+    # --- [요구사항 2] 선택한 날짜에 해당하는 공시만 노출되도록 필터링 보장 ---
+    filtered_disclosures = [item for item in disclosures if item.get("rcept_dt") == date_str]
 
-        # 필터 및 정렬 적용
-        if selected_importance != "전체":
-            selected_importance_code = importance_filter_map[selected_importance]
-            filtered_disclosures = [item for item in filtered_disclosures if item.get("importance") == selected_importance_code]
+    # 필터 및 정렬 적용
+    if selected_importance != "전체":
+        selected_importance_code = importance_filter_map[selected_importance]
+        filtered_disclosures = [item for item in filtered_disclosures if item.get("importance") == selected_importance_code]
 
-        if selected_sentiment != "전체":
-            selected_sentiment_codes = sentiment_filter_map[selected_sentiment]
-            filtered_disclosures = [item for item in filtered_disclosures if item.get("sentiment") in selected_sentiment_codes]
+    if selected_sentiment != "전체":
+        selected_sentiment_codes = sentiment_filter_map[selected_sentiment]
+        filtered_disclosures = [item for item in filtered_disclosures if item.get("sentiment") in selected_sentiment_codes]
 
-        if selected_sort == "중요도 높은 순":
-            filtered_disclosures = sorted(filtered_disclosures, key=lambda item: importance_order.get(item.get("importance"), 99))
-        elif selected_sort == "영향도 긍정 먼저":
-            filtered_disclosures = sorted(filtered_disclosures, key=lambda item: sentiment_positive_order.get(item.get("sentiment"), 99))
-        elif selected_sort == "영향도 부정 먼저":
-            filtered_disclosures = sorted(filtered_disclosures, key=lambda item: sentiment_negative_order.get(item.get("sentiment"), 99))
+    if selected_sort == "중요도 높은 순":
+        filtered_disclosures = sorted(filtered_disclosures, key=lambda item: importance_order.get(item.get("importance"), 99))
+    elif selected_sort == "영향도 긍정 먼저":
+        filtered_disclosures = sorted(filtered_disclosures, key=lambda item: sentiment_positive_order.get(item.get("sentiment"), 99))
+    elif selected_sort == "영향도 부정 먼저":
+        filtered_disclosures = sorted(filtered_disclosures, key=lambda item: sentiment_negative_order.get(item.get("sentiment"), 99))
 
-        # --- 결과 UI 출력 ---
-        st.write(f"총 {len(filtered_disclosures)}건의 공시가 조회되었습니다.")
+    # --- 결과 UI 출력 ---
+    st.write(f"조회 {len(disclosures)}건 중 현재 조건에 맞는 공시 {len(filtered_disclosures)}건")
 
-        # 지표 계산
-        high_count = sum(1 for item in filtered_disclosures if item.get("importance") == "high")
-        mid_count = sum(1 for item in filtered_disclosures if item.get("importance") == "mid")
-        low_count = sum(1 for item in filtered_disclosures if item.get("importance") == "low")
-        pos_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "pos")
-        neg_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "neg")
-        neu_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "neu")
+    # 지표 계산
+    high_count = sum(1 for item in filtered_disclosures if item.get("importance") == "high")
+    mid_count = sum(1 for item in filtered_disclosures if item.get("importance") == "mid")
+    low_count = sum(1 for item in filtered_disclosures if item.get("importance") == "low")
+    pos_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "pos")
+    neg_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "neg")
+    neu_count = sum(1 for item in filtered_disclosures if item.get("sentiment") == "neu")
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("전체 공시", f"{len(filtered_disclosures)}건")
-        with col2: st.metric("높음", f"{high_count}건")
-        with col3: st.metric("보통", f"{mid_count}건")
-        with col4: st.metric("일반", f"{low_count}건")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.metric("전체 공시", f"{len(filtered_disclosures)}건")
+    with col2: st.metric("높음", f"{high_count}건")
+    with col3: st.metric("보통", f"{mid_count}건")
+    with col4: st.metric("일반", f"{low_count}건")
 
-        col1, col2, col3 = st.columns(3)
-        with col1: st.metric("긍정", f"{pos_count}건")
-        with col2: st.metric("부정", f"{neg_count}건")
-        with col3: st.metric("중립", f"{neu_count}건")
+    col1, col2, col3 = st.columns(3)
+    with col1: st.metric("긍정", f"{pos_count}건")
+    with col2: st.metric("부정", f"{neg_count}건")
+    with col3: st.metric("중립", f"{neu_count}건")
 
-        if len(filtered_disclosures) == 0:
-            st.info("조회된 공시가 없거나 조건에 맞는 공시가 없습니다.")
+    if len(filtered_disclosures) == 0:
+        st.info("조회된 공시가 없거나 조건에 맞는 공시가 없습니다.")
 
-        for item in filtered_disclosures:
-            importance = item.get("importance", "low")
-            importance_text = importance_map.get(importance, "일반")
-            sentiment_text = sentiment_map.get(item.get("sentiment"), item.get("sentiment", "-"))
+    for item in filtered_disclosures:
+        importance = item.get("importance", "low")
+        importance_text = importance_map.get(importance, "미분류")
+        sentiment_text = sentiment_map.get(item.get("sentiment"), item.get("sentiment", "-"))
 
-            with st.container(border=True):
-                if importance == "high":
-                    badge_color, text_color = "#ff4b4b", "white"
-                elif importance == "mid":
-                    badge_color, text_color = "#ffc107", "black"
-                else:
-                    badge_color, text_color = "#e0e4e8", "black"
+        with st.container(border=True):
+            if importance == "high":
+                badge_color, text_color = "#ff4b4b", "white"
+            elif importance == "mid":
+                badge_color, text_color = "#ffc107", "black"
+            else:
+                badge_color, text_color = "#e0e4e8", "black"
 
-                badge_html = f"""
-                <span style="
-                    background-color: {badge_color}; 
-                    color: {text_color}; 
-                    padding: 0.2rem 0.6rem; 
-                    border-radius: 0.5rem; 
-                    font-size: 0.85rem; 
-                    font-weight: 600; 
-                    margin-right: 0.5rem;
-                ">
-                    {importance_text}
-                </span>
-                """
+            badge_html = f"""
+            <span style="
+                background-color: {badge_color};
+                color: {text_color};
+                padding: 0.2rem 0.6rem;
+                border-radius: 0.5rem;
+                font-size: 0.85rem;
+                font-weight: 600;
+                margin-right: 0.5rem;
+            ">
+                {importance_text}
+            </span>
+            """
 
-                report_nm = item.get("report_nm", "공시명 없음")
-                st.markdown(f"{badge_html} **{report_nm}**", unsafe_allow_html=True)
-                st.write(f"🏢 **회사명:** {item.get('corp_name', '-')}")
-                st.write(f"📅 **접수일자:** {item.get('rcept_dt', '-')}")
-                st.write(f"🤖 **AI 요약:** {item.get('summary', '요약 없음')} (영향도: {sentiment_text})")
+            report_nm = item.get("report_nm", "공시명 없음")
+            st.markdown(f"{badge_html} <strong>{escape(report_nm)}</strong>", unsafe_allow_html=True)
+            st.write(f"🏢 **회사명:** {item.get('corp_name', '-')}")
+            st.write(f"📅 **접수일자:** {item.get('rcept_dt', '-')}")
+            st.write(f"🤖 **AI 요약:** {item.get('summary', '요약 없음')} (영향도: {sentiment_text})")
 
-                rcept_no = item.get("rcept_no", "")
-                
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.caption(f"접수번호: {rcept_no}")
-                with col2:
-                    if rcept_no:
-                        dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
-                        st.link_button("📄 DART 원문", dart_url, use_container_width=True)
+            rcept_no = item.get("rcept_no", "")
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.caption(f"접수번호: {rcept_no}")
+            with col2:
+                if rcept_no and item.get("data_source") != "sample":
+                    dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+                    st.link_button("📄 DART 원문", dart_url, use_container_width=True)
+
+elif "results_date" in st.session_state:
+    st.info("조회 날짜가 바뀌었습니다. 공시 조회하기를 눌러 주세요.")
 
 # ==========================================
 # 5. 시연용 (디버그) 버튼 노출
 # ==========================================
 st.write("")
 st.write("")
-st.write("") 
+st.write("")
 
 st.caption("시연용 디버그 도구입니다.")
 if st.button("🚨 중요 공시(High) 강제 발생", use_container_width=True):
